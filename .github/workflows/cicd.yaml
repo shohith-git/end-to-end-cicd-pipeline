@@ -1,0 +1,45 @@
+name: cicd pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+        - name: checkout
+          uses: actions/checkout@v4
+          
+        - name: set-up python
+          uses: actions/setup-python@v5
+
+        - name: install dependencies
+          run: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+
+        - name: run application tests
+          run: pytest
+
+  docker:
+    needs: build-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: docker image
+        run: docker build -t end-to-end-cicd-pipeline:v1 .
+
+      - name: docker container
+        run: docker run -d -p 5000:5000 --name ci-pipeline end-to-end-cicd-pipeline:v1
+
+      - name: health check
+        run: |
+          curl http://localhost:5000
+          curl http://localhost:5000/health
+
