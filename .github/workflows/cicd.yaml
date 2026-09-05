@@ -38,14 +38,26 @@ jobs:
       - name: docker container
         run: docker run -d -p 5000:5000 --name ci-pipeline end-to-end-cicd-pipeline:v1
     
-      - name: check container running
-        run: docker ps
-
-      - name: container logs
-        run: docker logs ci-pipeline
-        
       - name: health check
         run: |
-          curl http://localhost:5000
-          curl http://localhost:5000/health
+          for i in {1..30}; do
+            status=$(docker inspect --format='{{.State.Health.Status}}' ci-pipeline)
+      
+            if [ "$status" = "healthy" ]; then
+              echo "Container is healthy"
+              break
+            fi
 
+            if [ "$status" = "unhealthy" ]; then
+              echo "Container is unhealthy"
+              exit 1
+            fi
+
+            echo "Container is still starting..."
+            sleep 2
+          done
+
+          if [ "$status" != "healthy" ]; then
+            echo "Container did not become healthy"
+            exit 1
+          fi
