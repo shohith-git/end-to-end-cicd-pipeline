@@ -37,7 +37,13 @@ jobs:
 
       - name: docker container
         run: docker run -d -p 5000:5000 --name ci-pipeline end-to-end-cicd-pipeline:v1
+    
+      - name: check container running
+        run: docker ps
 
+      - name: container logs
+        run: docker logs ci-pipeline
+        
       - name: health check
         run: |
           curl http://localhost:5000
