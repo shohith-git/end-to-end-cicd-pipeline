@@ -12,39 +12,49 @@ permissions:
   contents: read
 
 jobs:
+
+  # -------------------------
+  # Job 1: Build and Test
+  # -------------------------
   build-test:
     runs-on: ubuntu-latest
-    
+
     steps:
-        - name: checkout
-          uses: actions/checkout@v4
-          
-        - name: set-up python
-          uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
 
-        - name: install dependencies
-          run: |
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
+      - name: Set up Python
+        uses: actions/setup-python@v5
 
-        - name: run application tests
-          run: pytest
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
+      - name: Run application tests
+        run: pytest
+
+
+  # -------------------------
+  # Job 2: Docker
+  # -------------------------
   docker:
     needs: build-test
     runs-on: ubuntu-latest
 
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set image version
         run: echo "IMAGE_VERSION=v${{ github.run_number }}" >> $GITHUB_ENV
 
-      - name: docker image
-        run: docker build -t end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }} .
-        
-      - name: security scan
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }} .
+
+      - name: Security scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }}'
@@ -52,16 +62,19 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           severity: 'CRITICAL'
-          
 
-      - name: docker container
-        run: docker run -d -p 5000:5000 --name ci-pipeline end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }}
-    
-      - name: health check
+      - name: Run Docker container
+        run: |
+          docker run -d \
+            -p 5000:5000 \
+            --name ci-pipeline \
+            end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }}
+
+      - name: Health check
         run: |
           for i in {1..30}; do
             status=$(docker inspect --format='{{.State.Health.Status}}' ci-pipeline)
-      
+
             if [ "$status" = "healthy" ]; then
               echo "Container is healthy"
               break
@@ -80,19 +93,6 @@ jobs:
             echo "Container did not become healthy"
             exit 1
           fi
-      - name: Show OIDC subject
-        env:
-          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
-        run: |
-          TOKEN=$(curl -sS \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r '.value')
-
-          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f2 | tr '_-' '/+')
-          PAYLOAD=$(printf '%s' "$PAYLOAD" | base64 -d 2>/dev/null || true)
-
-          echo "$PAYLOAD" | jq '{sub, aud}'
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -106,14 +106,36 @@ jobs:
 
       - name: Tag image
         run: |
-          docker tag end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }} \
+          docker tag \
+            end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }} \
             ${{ steps.login-ecr.outputs.registry }}/end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }}
 
       - name: Push image to ECR
         run: |
           docker push \
             ${{ steps.login-ecr.outputs.registry }}/end-to-end-cicd-pipeline:${{ env.IMAGE_VERSION }}
-      
+
+
+  # -------------------------
+  # Job 3: Deployment
+  # -------------------------
+  deploy:
+    needs: docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image version
+        run: echo "IMAGE_VERSION=v${{ github.run_number }}" >> $GITHUB_ENV
+
       - name: Download task definition
         run: |
           aws ecs describe-task-definition \
