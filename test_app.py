@@ -7,7 +7,7 @@ def test_home():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert response.get_json()["message"] == "CI/CD pipeline application is running!"
+    assert response.get_json()["message"] == "CI/CD pipeline application v18 is running!"
 
 
 def test_health():
